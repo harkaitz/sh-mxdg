@@ -1,0 +1,199 @@
+#!/bin/sh -e
+#L:
+#L:  MIT License
+#L:  
+#l:  Bug reports, feature requests to gemini|https://harkadev.com/oss
+#l:  Copyright (c) 2022 Harkaitz Agirre, harkaitz.aguirre@gmail.com
+#L:
+#L:  Permission is hereby granted, free of charge, to any person obtaining
+#L:  a copy of this software and associated documentation files (the
+#L:  "Software"), to deal in the Software without restriction, including
+#L:  without limitation the rights to use, copy, modify, merge, publish,
+#L:  distribute, sublicense, and/or sell copies of the Software, and to
+#L:  permit persons to whom the Software is furnished to do so, subject to
+#L:  the following conditions:
+#L:
+#L:  The above copyright notice and this permission notice shall be
+#L:  included in all copies or substantial portions of the Software.
+#L:
+#L:  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+#L:  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+#L:  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+#L:  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+#L:  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#L:  OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+#L:  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#h: Usage: $0 
+#h:
+#h: Configure *xdg-open(1)* assigning programs to certain files and
+#h: URLs. All the information is stored in [~/.config/mimeapps.list]
+#h: [~/.local/share/applications].
+#h:
+#h:     -v                     : Show configuration.
+#h:     -an APP[=CMD] [-X] ... : Create new application.
+#h:         -C COMMENT  -I ICON    -M MIME 
+#h:         -G CATEGORY -O OPT=VAL -K KEYWORD
+#h:     -al                    : List applications.
+#h:     -ad APP                : Delete application.
+#h:     -ul                    : List assignations.
+#h:     -un URI[=APP]          : Assign URIs to application.
+#h:     -ud URI                : Delete URI assignation.             
+#h:
+#h: For example: mxdg -an firefox -X -un http -un https ...
+mxdg() {
+    ## Parse command line options.
+    local OPTIND optopt= last= a= u=
+    local o_app_new=
+    local o_app_list=n
+    local o_app_del=
+    local o_uri_list=n
+    local o_uri_new=
+    local o_uri_del=
+    local o_comment=  o_icon=        o_terminal=  o_mimes=
+    local o_keywords= o_categories=  o_options=   o_prog=
+    local o_name=
+    while getopts "vaun:ld:C:I:C:I:XM:K:G:O:" optopt;do # OPTARG
+        case ${last}${optopt} in
+            *v) mxdg_show_variables                            ;;
+            *a) local last=a                                   ;;
+            *u) local last=u                                   ;;
+            an) local o_app_new="${OPTARG}"                    ;;
+            al) local o_app_list=y                             ;;
+            ad) local o_app_del="${o_app_del} ${OPTARG}"       ;;
+            ul) local o_uri_list=y                             ;;
+            un) local o_uri_new="${o_uri_new} ${OPTARG}"       ;;
+            ud) local o_uri_del="${o_uri_del} ${OPTARG}"       ;;
+            *C) local o_comment="${OPTARG}"                    ;;
+            *I) local o_icon="${OPTARG}"                       ;;
+            *X) local o_terminal=false                         ;;
+            *M) local o_mimes="${o_mimes}${OPTARG};"           ;;
+            *K) local o_keywords="${o_keywords}${OPTARG};"     ;;
+            *G) local o_categories="${o_categories}${OPTARG};" ;;
+            *O) local o_options="${o_options}${OPTARG}${NL}"   ;;
+            \?) return 1;;
+        esac
+    done
+    shift $(( $OPTIND - 1 ))
+
+    ## ------------------------------
+    ## Delete mimes and applications.
+    for u in ${o_uri_del} ${o_uri_new}; do
+        local u="`echo "${u}" | sed 's|=.*||'`"
+        mxdg_log "Deleting x-scheme-handler/${u} ..."
+        if test -f "${MXDG_MIMEAPPS}"; then
+            sed -i "
+            \\|^x-scheme-handler/${u}=|d
+            /Removed Associations/,\$d
+            " "${MXDG_MIMEAPPS}"
+        fi
+    done
+    for a in ${o_app_del};do
+        mxdg_log "Removing ${a}.desktop ..."
+        if test -f "${MXDG_MIMEAPPS}";then
+            sed -i "\\|x-scheme-handler/\(.*\)=${a}.desktop|d" "${MXDG_MIMEAPPS}"
+        fi
+        mxdg_log "Deleting ${MXDG_APPDIR}/${a}.desktop ..."
+        rm -f "${MXDG_APPDIR}/${a}.desktop"
+    done
+
+
+    ## -------------------
+    ## Create application.
+    if test -n "${o_app_new}";then
+        local o_name="`echo "${o_app_new}" | sed    's|=.*||'      `"
+        local o_prog="`echo "${o_app_new}" | sed -n 's|^[^=]*=||p' `"
+        local o_prog="${o_prog:-${o_name}}"
+    fi
+    if test -n "${o_app_new}";then
+        mxdg_log "Creating ${o_name}.desktop ..."
+        mkdir -p "${MXDG_APPDIR}"
+        cat <<-EOF > "${MXDG_APPDIR}/${o_name}.desktop"
+	[Desktop Entry]
+	Version=1.0
+	Name=${o_name}
+	Comment=${o_comment}
+	Exec=${o_prog} %u
+	Icon=${o_icon}
+	Terminal=${o_terminal:-true}
+	Type=Application
+	Categories=${o_categories}
+	MimeType=${o_mimes}
+	Keywords=${o_keywords}
+	StartupNotify=false
+	${o_options}
+	EOF
+    fi
+
+    ## ------------
+    ## Assign URIs.
+    for u in ${o_uri_new}; do
+        local o_uri="`echo "${u}" | sed    's|=.*||'       `"
+        local o_app="`echo "${u}" | sed -n 's|^[^=]*=||p'  `"
+        local o_app="${o_app:-${o_name}}"
+        if test -f "${MXDG_APPDIR}/${o_app_new}.desktop"; then
+            mxdg_log "Adding x-scheme-handler/${o_uri} to ${o_app_new}.desktop ..."
+            sed -i "
+            /MimeType=/s|x-scheme-handler/${o_uri}\\;||
+            /MimeType=/s|=|=x-scheme-handler/${o_uri}|
+            " "${MXDG_APPDIR}/${o_app_new}.desktop"
+        fi
+        
+        mxdg_log "Adding x-scheme-handler/${o_uri}=${o_app} ..."
+        sed -i "
+        /Default Applications/ax-scheme-handler/${o_uri}=${o_app}.desktop
+        " "${MXDG_MIMEAPPS}"
+    done
+
+    ## --------------------
+    ## List mimes and apps.
+    if test @"${o_uri_list}" = @"y";then
+        printf '%s\t%s\n' "URI" "DESKTOP-APP"
+        sed -n '
+        s|^x-scheme-handler/\(.*\)=\(.*\).desktop\;*$|\1\t\2|p
+        ' "${MXDG_MIMEAPPS}"
+    fi
+    if test @"${o_app_list}" = @"y";then
+        if test -d "${MXDG_APPDIR}";then
+            ls "${MXDG_APPDIR}" | sed -n '/^wine-extension-/d;s|\.desktop$||p'
+        fi
+    fi
+
+    ## --------------------
+    ## Update.
+    if test -n "${o_uri_new}${o_app_new}${o_uri_del}${o_app_del}" && test -d "${MXDG_APPDIR}";then
+        mxdg_log "Running 'update-desktop-database' ..."
+        update-desktop-database -v "${MXDG_APPDIR}" || true
+    fi
+
+}
+mxdg_show_variables() {
+    printf '%-20s : %s\n' MXDG_CONFIG_DIR "${MXDG_CONFIG_DIR}"
+    printf '%-20s : %s\n' MXDG_MIMEAPPS   "${MXDG_MIMEAPPS}"
+    printf '%-20s : %s\n' MXDG_APPDIR     "${MXDG_APPDIR}"
+}
+mxdg_calc_variables() {
+    MXDG_CONFIG_DIR="${MXDG_CONFIG_DIR:-${HOME}/.config}"
+    MXDG_MIMEAPPS="${MXDG_MIMEAPPS:-${MXDG_CONFIG_DIR}/mimeapps.list}"
+    MXDG_APPDIR="${MXDG_APPDIR:-${HOME}/.local/share/applications}"
+    NL="
+"
+}
+mxdg_log() {
+    echo "${SCRNAME}: $*" >&2
+}
+
+## -----------------------------------------------------------------------------
+mxdg_calc_variables
+SCRNAME="`basename "$0"`"
+if test @"${SCRNAME}" = @"mxdg";then
+    case "${1}" in
+        ''|-h|--help)
+            sed -n 's/^ *#h: \{0,1\}//p' "$0" | sed "s|\\\$0|${SCRNAME}|g"
+            echo ""
+            sed -n 's/^ *#l: \{0,2\}//p' "$0"
+            ;;
+        *)
+            mxdg "$@"
+            ;;
+    esac
+fi
