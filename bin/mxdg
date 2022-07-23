@@ -162,7 +162,7 @@ mxdg() {
     ## Update.
     if test -n "${o_uri_new}${o_app_new}${o_uri_del}${o_app_del}" && test -d "${MXDG_APPDIR}";then
         mxdg_log "Running 'update-desktop-database' ..."
-        update-desktop-database -v "${MXDG_APPDIR}" || true
+        update-desktop-database -v "${MXDG_APPDIR}" 2>/dev/null || true
     fi
 
 }
